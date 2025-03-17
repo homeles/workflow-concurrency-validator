@@ -2,10 +2,13 @@
     "name": "workflow-concurrency-validator",
     "version": "1.0.0",
     "description": "GitHub Action to validate workflow concurrency limits",
-    "main": "validate-concurrency.js",
+    "main": "dist/index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "build": "ncc build validate-concurrency.js -o dist"
+        "test": "jest",
+        "build": "rm -rf lib && tsc && ncc build lib/validate-concurrency.js -o dist",
+        "type-check": "tsc --noEmit",
+        "lint": "eslint . --ext .ts",
+        "prepare": "npm run build"
     },
     "keywords": [
         "github",
@@ -21,6 +24,16 @@
         "js-yaml": "^4.1.0"
     },
     "devDependencies": {
-        "@vercel/ncc": "^0.38.3"
+        "@types/glob": "^8.1.0",
+        "@types/jest": "^29.5.5",
+        "@types/js-yaml": "^4.0.6",
+        "@types/node": "^20.8.0",
+        "@typescript-eslint/eslint-plugin": "^6.7.3",
+        "@typescript-eslint/parser": "^6.7.3",
+        "@vercel/ncc": "^0.38.3",
+        "eslint": "^8.50.0",
+        "jest": "^29.7.0",
+        "ts-jest": "^29.1.1",
+        "typescript": "^5.2.2"
     }
 }

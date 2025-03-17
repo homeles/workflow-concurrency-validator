@@ -1,13 +1,18 @@
 # Workflow Concurrency Validator
-
 This GitHub Action validates that the concurrency usage across workflows in a repository does not exceed a specified limit. It helps prevent abuse of GitHub's concurrent job limits by analyzing workflow files and detecting potential parallel execution.
 
 ## What it checks
-
 - Top-level concurrency settings in workflows
 - Job-level concurrency settings
 - Implicit concurrency from jobs that run in parallel (no dependencies)
-- Respects `cancel-in-progress: true` which doesn't count toward concurrency limits
+- Matrix job combinations
+- Jobs within the same workflow run that can execute in parallel
+
+## Important Notes
+- Jobs within the same workflow run can execute in parallel even with `cancel-in-progress: true`
+- `cancel-in-progress` only affects concurrent workflow runs, not jobs within the same workflow
+- Matrix jobs are counted by their total number of combinations
+- Dependencies between jobs (`needs:`) are properly analyzed to identify truly parallel execution paths
 
 ## Installation
 
@@ -189,27 +194,86 @@ jobs:
 | `details` | JSON object with detailed information about concurrency usage |
 
 ## Development and Building
+This action is written in TypeScript and uses [@vercel/ncc](https://github.com/vercel/ncc) to bundle all dependencies into a single file.
 
-This action uses [@vercel/ncc](https://github.com/vercel/ncc) to bundle all dependencies into a single file. If you make changes to the action, follow these steps to rebuild it:
-
+### Setting Up Development Environment
 1. Install dependencies:
    ```bash
    npm install
    ```
-
 2. Install development dependencies:
    ```bash
    npm install --save-dev @vercel/ncc
    ```
 
-3. Make your changes to `validate-concurrency.js`
-
+### Development Workflow
+1. Make changes to files in the `src/` directory
+2. Run type checking:
+   ```bash
+   npm run type-check
+   ```
+3. Run tests:
+   ```bash
+   npm test
+   ```
 4. Build the bundled version:
    ```bash
    npm run build
    ```
-
 5. Commit your changes, including the updated `dist/index.js` file
+
+### TypeScript Implementation Details
+The action's core functionality is implemented with the following TypeScript interfaces:
+- `WorkflowConcurrency`: Defines the structure of concurrency settings
+- `WorkflowJob`: Represents a job in a workflow file
+- `WorkflowFile`: Describes the overall workflow file structure
+- `ConcurrencyDetail`: Contains detailed information about concurrency usage
+
+### Output Format Examples
+The action provides detailed output in JSON format. Here are examples of the output structure:
+
+#### Details Output
+```json
+[
+  {
+    "file": ".github/workflows/build.yml",
+    "level": "workflow",
+    "type": "standard",
+    "counted": true
+  },
+  {
+    "file": ".github/workflows/test.yml",
+    "level": "workflow",
+    "type": "cancel-in-progress",
+    "counted": false,
+    "note": "Only affects concurrent workflow runs"
+  },
+  {
+    "file": ".github/workflows/matrix.yml",
+    "level": "implicit",
+    "jobs": ["test"],
+    "count": 6,
+    "counted": true,
+    "note": "Matrix job with 6 combinations"
+  },
+  {
+    "file": ".github/workflows/deploy.yml",
+    "level": "implicit",
+    "jobs": ["deploy-staging", "deploy-prod"],
+    "count": 2,
+    "counted": true,
+    "note": "Jobs running in parallel"
+  }
+]
+```
+
+### Issues Output
+```json
+[
+  "Error processing .github/workflows/invalid.yml: Unexpected token in YAML",
+  "Total concurrency (12) exceeds maximum allowed (10)"
+]
+```
 
 ## Testing
 
@@ -260,6 +324,104 @@ This action uses a bundled approach to avoid dependency issues. If you encounter
 ### Output Not Working
 
 The action uses the modern GitHub Actions output method with environment files. If you're seeing warnings about deprecated commands, make sure you're using the latest version of the action.
+
+### Debugging TypeScript Issues
+1. Check the TypeScript configuration in `tsconfig.json`
+2. Run `npm run type-check` to verify types
+3. Ensure all imported modules have proper type definitions
+4. Check the `lib` directory for compiled JavaScript files
+
+### Understanding Concurrency Detection
+The action detects concurrency in several ways:
+
+1. **Explicit workflow-level concurrency**: Set via `concurrency:` at the workflow root
+   - Simple string format: `concurrency: group1`
+   - Object format with cancel-in-progress: 
+     ```yaml
+     concurrency:
+       group: build-group
+       cancel-in-progress: true
+     ```
+   Note: cancel-in-progress only affects concurrent workflow runs, not jobs within the same workflow
+
+2. **Explicit job-level concurrency**: Set via `concurrency:` in individual jobs
+   ```yaml
+   jobs:
+     job1:
+       concurrency: group1
+     job2:
+       concurrency: group2
+   ```
+
+3. **Implicit parallel jobs**: Jobs that can run in parallel based on:
+   - No `needs:` dependencies between them
+   - Being in the same dependency level
+   Example:
+   ```yaml
+   jobs:
+     build:
+       runs-on: ubuntu-latest
+       steps: [...]
+     test:
+       runs-on: ubuntu-latest
+       steps: [...]
+     deploy:
+       needs: [build, test]
+       runs-on: ubuntu-latest
+       steps: [...]
+   ```
+   Here, `build` and `test` can run in parallel (count: 2), while `deploy` runs after them (different level)
+
+4. **Matrix jobs**: Count based on total combinations
+   ```yaml
+   jobs:
+     test:
+       strategy:
+         matrix:
+           os: [ubuntu, windows, macos]
+           node: [14, 16]
+       runs-on: ${{ matrix.os }}
+       steps: [...]
+   ```
+   This counts as 6 concurrent jobs (3 OS × 2 Node.js versions)
+
+#### Example Concurrency Calculations
+
+1. Simple workflow with two parallel jobs:
+   ```yaml
+   jobs:
+     job1:
+       runs-on: ubuntu-latest
+     job2:
+       runs-on: ubuntu-latest
+   ```
+   Total concurrency: 2 (both jobs can run in parallel)
+
+2. Workflow with cancel-in-progress and parallel jobs:
+   ```yaml
+   concurrency:
+     group: build
+     cancel-in-progress: true
+   jobs:
+     job1:
+       runs-on: ubuntu-latest
+     job2:
+       runs-on: ubuntu-latest
+   ```
+   Total concurrency: 2 (jobs can still run in parallel within the same workflow)
+
+3. Matrix job with dependencies:
+   ```yaml
+   jobs:
+     test:
+       strategy:
+         matrix:
+           os: [ubuntu, windows]
+           node: [14, 16]
+     deploy:
+       needs: [test]
+   ```
+   Total concurrency: 4 (2 OS × 2 Node.js versions in parallel, deploy runs after)
 
 ## How to Contribute
 

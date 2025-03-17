@@ -24,6 +24,10 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+permissions:
+  pull-requests: write
+  contents: read
+
 outputs:
   total-concurrency:
     description: 'Total concurrency detected across workflows'
@@ -31,6 +35,9 @@ outputs:
   validation-passed:
     description: 'Whether validation passed'
     value: ${{ steps.validate.outputs.validation_passed }}
+  validation-result:
+    description: 'Detailed validation result including issues'
+    value: ${{ steps.validate.outputs.validation_result }}
   issues:
     description: 'Issues found during validation'
     value: ${{ steps.validate.outputs.issues }}
@@ -51,31 +58,59 @@ runs:
         INPUT_MAX_CONCURRENCY: ${{ inputs.max-concurrency }}
         INPUT_WORKFLOW_PATH: ${{ inputs.workflow-path }}
         INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        INPUT_COMMENT_ON_PR: ${{ inputs.comment-on-pr }}
         GITHUB_WORKSPACE: ${{ github.workspace }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+
+    - name: Debug PR comment conditions
+      if: always()
+      shell: bash
+      run: |
+        echo "Debug PR comment conditions:"
+        echo "comment-on-pr input: ${{ inputs.comment-on-pr }}"
+        echo "INPUT_COMMENT_ON_PR env: $INPUT_COMMENT_ON_PR"
+        echo "validation_passed: ${{ steps.validate.outputs.validation_passed }}"
+        echo "github.event_name: ${{ github.event_name }}"
+        if [ -f "$GITHUB_OUTPUT" ]; then
+          echo "Contents of GITHUB_OUTPUT:"
+          cat "$GITHUB_OUTPUT"
+        else
+          echo "No GITHUB_OUTPUT file found"
+        fi
         
     - name: Comment on PR if validation fails
-      if: inputs.comment-on-pr == 'true' && steps.validate.outputs.validation_passed == 'false' && github.event_name == 'pull_request'
+      if: ${{ always() && inputs.comment-on-pr == 'true' && steps.validate.outputs.validation_passed == 'false' && github.event_name == 'pull_request' }}
       uses: actions/github-script@v6
       with:
         github-token: ${{ inputs.token }}
         script: |
-          const issues = JSON.parse('${{ steps.validate.outputs.issues }}');
-          const totalConcurrency = '${{ steps.validate.outputs.total_concurrency }}';
-          const maxConcurrency = '${{ inputs.max-concurrency }}';
-          
-          let body = '❌ Workflow Concurrency Validation Failed!\n\n';
-          body += `Total concurrency (${totalConcurrency}) exceeds maximum allowed (${maxConcurrency}).\n\n`;
-          
-          if (issues.length > 0) {
-            body += 'Issues found:\n';
-            issues.forEach(issue => {
-              body += `- ${issue}\n`;
+          try {
+            console.log('Starting PR comment creation...');
+            const validationResult = JSON.parse('${{ steps.validate.outputs.validation_result }}');
+            console.log('Validation result:', validationResult);
+            
+            let body = '❌ Workflow Concurrency Validation Failed!\n\n';
+            body += `Found ${validationResult.issues.length} workflows with concurrency issues (maximum allowed: ${validationResult.max}).\n\n`;
+            
+            if (validationResult.issues && validationResult.issues.length > 0) {
+              body += 'Issues found:\n';
+              validationResult.issues.forEach(issue => {
+                body += `- ${issue}\n`;
+              });
+            }
+            
+            console.log('Attempting to create comment with body:', body);
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
             });
+            
+            console.log('Successfully posted comment on PR');
+          } catch (error) {
+            console.log('Error details:', error);
+            throw error;
           }
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: body
-          });

@@ -1,6 +1,301 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
+/***/ 106:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const fs_1 = __importDefault(__nccwpck_require__(896));
+const path_1 = __importDefault(__nccwpck_require__(928));
+const js_yaml_1 = __importDefault(__nccwpck_require__(281));
+const glob_1 = __importDefault(__nccwpck_require__(574));
+/**
+ * Utility class for formatted logging in GitHub Actions
+ */
+class Logger {
+    static group(name) {
+        console.log(`::group::${name}`);
+    }
+    static endGroup() {
+        console.log('::endgroup::');
+    }
+    static error(message) {
+        console.log(`::error::${message}`);
+    }
+    static warning(message) {
+        console.log(`::warning::${message}`);
+    }
+    static notice(message) {
+        console.log(`::notice::${message}`);
+    }
+    static debug(message) {
+        console.log(`::debug::${message}`);
+    }
+    static info(message) {
+        console.log(message);
+    }
+    static success(message) {
+        console.log(`✅ ${message}`);
+    }
+    static fail(message) {
+        console.log(`❌ ${message}`);
+    }
+    static summary(title, content) {
+        Logger.group(title);
+        Logger.info(content);
+        Logger.endGroup();
+    }
+}
+/**
+ * Validates the action inputs to ensure they are valid
+ * @throws {Error} If max-concurrency is not a positive number
+ */
+function validateInputs() {
+    const maxConcurrency = parseInt(process.env.INPUT_MAX_CONCURRENCY || '10');
+    if (isNaN(maxConcurrency) || maxConcurrency <= 0) {
+        throw new Error('max-concurrency must be a positive number');
+    }
+}
+/**
+ * Sets an output variable for the GitHub Action
+ * @param name - The name of the output variable
+ * @param value - The value to set
+ */
+function setOutput(name, value) {
+    const outputFilePath = process.env.GITHUB_OUTPUT;
+    if (outputFilePath) {
+        const delimiter = `ghadelimiter_${Date.now()}`;
+        fs_1.default.appendFileSync(outputFilePath, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
+    }
+    else {
+        console.log(`::set-output name=${name}::${value}`);
+    }
+}
+// Get and validate inputs
+const MAX_CONCURRENCY = parseInt(process.env.INPUT_MAX_CONCURRENCY || '10');
+const WORKFLOW_DIR = process.env.INPUT_WORKFLOW_PATH || '.github/workflows';
+const FAIL_ON_ERROR = (process.env.INPUT_FAIL_ON_ERROR || 'true') === 'true';
+const COMMENT_ON_PR = (process.env.INPUT_COMMENT_ON_PR || 'true') === 'true';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const WORKSPACE = process.env.GITHUB_WORKSPACE || process.cwd();
+// Initialize state
+const issues = [];
+const workflowResults = [];
+let totalConcurrency = 0;
+/**
+ * Helper function to build a dependency graph of jobs and identify parallel execution paths
+ */
+function analyzeJobDependencies(jobs) {
+    // Build dependency graph
+    const dependencyMap = new Map();
+    const allJobs = new Set();
+    // Initialize maps
+    Object.keys(jobs).forEach(jobKey => {
+        dependencyMap.set(jobKey, new Set());
+        allJobs.add(jobKey);
+    });
+    // Build dependency relationships
+    Object.entries(jobs).forEach(([jobKey, job]) => {
+        if (job.needs) {
+            // Handle both string and array cases for needs
+            const jobNeeds = Array.isArray(job.needs) ? job.needs : [job.needs];
+            jobNeeds.forEach(need => {
+                dependencyMap.get(jobKey)?.add(need);
+            });
+        }
+    });
+    // Find jobs that can run in parallel (same level in dependency tree)
+    const jobLevels = [];
+    let remainingJobs = new Set(allJobs);
+    while (remainingJobs.size > 0) {
+        // Find all jobs that have no unresolved dependencies
+        const currentLevel = Array.from(remainingJobs).filter(job => {
+            const deps = dependencyMap.get(job);
+            return deps && Array.from(deps).every(dep => !remainingJobs.has(dep));
+        });
+        if (currentLevel.length === 0 && remainingJobs.size > 0) {
+            // Circular dependency or invalid configuration
+            break;
+        }
+        // Even a single job at a level should be counted
+        jobLevels.push(currentLevel);
+        currentLevel.forEach(job => remainingJobs.delete(job));
+    }
+    // Find the level with maximum parallel jobs
+    const maxConcurrency = Math.max(...jobLevels.map(level => {
+        let levelCount = 0;
+        level.forEach(jobName => {
+            const job = jobs[jobName];
+            levelCount += countMatrixExecutions(job);
+        });
+        return levelCount;
+    }));
+    return {
+        parallelJobs: jobLevels,
+        maxConcurrency
+    };
+}
+/**
+ * Analyze a matrix job to count its parallel executions
+ */
+function countMatrixExecutions(job) {
+    if (!job.strategy?.matrix) {
+        return 1;
+    }
+    // Count combinations of matrix values
+    return Object.values(job.strategy.matrix).reduce((total, values) => {
+        if (Array.isArray(values)) {
+            return total * values.length;
+        }
+        return total;
+    }, 1);
+}
+try {
+    validateInputs();
+    const workflowPath = path_1.default.join(WORKSPACE, WORKFLOW_DIR);
+    const workflowFiles = glob_1.default.sync(`${workflowPath}/**/*.{yml,yaml}`);
+    Logger.notice(`Found ${workflowFiles.length} workflow files to validate`);
+    Logger.info('Maximum allowed parallel jobs per workflow: ' + MAX_CONCURRENCY);
+    Logger.info('─'.repeat(80));
+    if (workflowFiles.length === 0) {
+        Logger.warning(`No workflow files found in ${workflowPath}`);
+    }
+    let anyFailures = false;
+    workflowFiles.forEach((file) => {
+        try {
+            const relativeFilePath = path_1.default.relative(WORKSPACE, file);
+            const fileContent = fs_1.default.readFileSync(file, 'utf8');
+            const workflow = js_yaml_1.default.load(fileContent);
+            // Analyze workflow first before showing header
+            const { parallelJobs, maxConcurrency } = workflow.jobs ? analyzeJobDependencies(workflow.jobs) : { parallelJobs: [], maxConcurrency: 0 };
+            const workflowPassed = maxConcurrency <= MAX_CONCURRENCY;
+            // Show header with validation status
+            Logger.group(`📄 ${workflowPassed ? '✅' : '❌'} ${relativeFilePath} (${maxConcurrency} parallel jobs)`);
+            if (!workflow.jobs) {
+                Logger.info('No jobs defined in workflow');
+                Logger.endGroup();
+                return;
+            }
+            let details = [];
+            // Check if workflow has cancel-in-progress concurrency
+            if (typeof workflow.concurrency === 'object' && workflow.concurrency['cancel-in-progress'] === true) {
+                Logger.info('Note: Workflow has cancel-in-progress concurrency (only affects concurrent workflow runs)');
+                details.push({
+                    file: relativeFilePath,
+                    level: 'workflow',
+                    type: 'cancel-in-progress',
+                    counted: false
+                });
+            }
+            // Process each level of parallel jobs for logging
+            parallelJobs.forEach((level, index) => {
+                if (level.length > 0) {
+                    if (level.length > 1) {
+                        Logger.info(`\nParallel execution group ${index + 1}:`);
+                    }
+                    let levelConcurrency = 0;
+                    level.forEach(jobKey => {
+                        const job = workflow.jobs[jobKey];
+                        const matrixCount = countMatrixExecutions(job);
+                        levelConcurrency += matrixCount;
+                        if (matrixCount > 1) {
+                            Logger.info(`➕ Job '${jobKey}' with matrix: ${matrixCount} parallel executions`);
+                        }
+                        else {
+                            Logger.info(`➕ Job '${jobKey}'`);
+                        }
+                    });
+                    if (level.length > 1) {
+                        Logger.info(`Group total: ${levelConcurrency} concurrent executions`);
+                    }
+                    details.push({
+                        file: relativeFilePath,
+                        level: 'implicit',
+                        type: 'standard',
+                        jobs: level,
+                        count: levelConcurrency,
+                        counted: true
+                    });
+                }
+            });
+            Logger.info('\nSummary:');
+            Logger.info(`Maximum parallel jobs: ${maxConcurrency}`);
+            Logger.info(`Maximum allowed: ${MAX_CONCURRENCY}`);
+            if (!workflowPassed) {
+                const errorMsg = `Workflow has too many parallel jobs (${maxConcurrency} > ${MAX_CONCURRENCY})`;
+                Logger.error(errorMsg);
+                issues.push(`${relativeFilePath}: ${errorMsg}`);
+                anyFailures = true;
+            }
+            // Store results
+            workflowResults.push({
+                file: relativeFilePath,
+                concurrencyCount: maxConcurrency,
+                passed: workflowPassed,
+                details
+            });
+            Logger.endGroup();
+            Logger.info('─'.repeat(80));
+        }
+        catch (error) {
+            const errorMsg = `Error processing ${file}: ${error.message}`;
+            Logger.error(errorMsg);
+            issues.push(errorMsg);
+            Logger.endGroup();
+        }
+    });
+    // Final summary
+    Logger.group('🔍 Validation Summary');
+    Logger.info(`\nTotal workflows analyzed: ${workflowFiles.length}`);
+    Logger.info(`Workflows with issues: ${issues.length}`);
+    if (issues.length > 0) {
+        Logger.info('\nIssues found:');
+        issues.forEach(issue => Logger.error(issue));
+    }
+    if (!anyFailures) {
+        Logger.success('\nAll workflows passed validation!');
+    }
+    else {
+        Logger.fail('\nSome workflows have too many parallel jobs.');
+    }
+    Logger.endGroup();
+    // Set outputs for GitHub Actions
+    const overallPassed = !anyFailures;
+    setOutput('validation_passed', overallPassed.toString());
+    setOutput('workflow_results', JSON.stringify(workflowResults));
+    setOutput('issues', JSON.stringify(issues));
+    setOutput('total_concurrency', totalConcurrency.toString());
+    // Add validation_result output with the format expected by the PR comment
+    setOutput('validation_result', JSON.stringify({
+        passed: overallPassed,
+        total: totalConcurrency,
+        max: MAX_CONCURRENCY,
+        issues: issues
+    }));
+    if (!overallPassed && FAIL_ON_ERROR) {
+        process.exit(1);
+    }
+}
+catch (error) {
+    Logger.error(`Fatal error: ${error.message}`);
+    issues.push(`Fatal error: ${error.message}`);
+    setOutput('validation_passed', 'false');
+    setOutput('workflow_results', '[]');
+    setOutput('issues', JSON.stringify(issues));
+    setOutput('total_concurrency', '0');
+    if (FAIL_ON_ERROR) {
+        process.exit(1);
+    }
+}
+
+
+/***/ }),
+
 /***/ 380:
 /***/ ((module) => {
 
@@ -7569,7 +7864,7 @@ module.exports = require("util");
 /******/ 		// Execute the module function
 /******/ 		var threw = true;
 /******/ 		try {
-/******/ 			__webpack_modules__[moduleId](module, module.exports, __nccwpck_require__);
+/******/ 			__webpack_modules__[moduleId].call(module.exports, module, module.exports, __nccwpck_require__);
 /******/ 			threw = false;
 /******/ 		} finally {
 /******/ 			if(threw) delete __webpack_module_cache__[moduleId];
@@ -7585,192 +7880,12 @@ module.exports = require("util");
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
-var __webpack_exports__ = {};
-const fs = __nccwpck_require__(896);
-const path = __nccwpck_require__(928);
-const yaml = __nccwpck_require__(281);
-const glob = __nccwpck_require__(574);
-
-// Get inputs
-const MAX_CONCURRENCY = parseInt(process.env.INPUT_MAX_CONCURRENCY || '10');
-const WORKFLOW_DIR = process.env.INPUT_WORKFLOW_PATH || '.github/workflows';
-const FAIL_ON_ERROR = (process.env.INPUT_FAIL_ON_ERROR || 'true') === 'true';
-const WORKSPACE = process.env.GITHUB_WORKSPACE || process.cwd();
-
-// Path to workflow directory
-const workflowPath = path.join(WORKSPACE, WORKFLOW_DIR);
-
-// Initialize counters and issues array
-let totalConcurrency = 0;
-let issues = [];
-let workflowConcurrencyDetails = [];
-
-// Function to set GitHub Actions outputs
-function setOutput(name, value) {
-  const outputFilePath = process.env.GITHUB_OUTPUT;
-  if (outputFilePath) {
-    // Multi-line value handling for GitHub Actions
-    if (typeof value === 'object') {
-      value = JSON.stringify(value);
-    }
-    const delimiter = `ghadelimiter_${Date.now()}`;
-    fs.appendFileSync(outputFilePath, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
-  } else {
-    // Fallback for older runners, but this will show deprecation warnings
-    console.log(`::set-output name=${name}::${value}`);
-  }
-}
-
-try {
-  // Get all workflow files
-  const workflowFiles = glob.sync(`${workflowPath}/**/*.{yml,yaml}`);
-  
-  if (workflowFiles.length === 0) {
-    console.log(`No workflow files found in ${workflowPath}`);
-  }
-  
-  workflowFiles.forEach(file => {
-    try {
-      const relativeFilePath = path.relative(WORKSPACE, file);
-      const fileContent = fs.readFileSync(file, 'utf8');
-      const workflow = yaml.load(fileContent);
-      
-      // Check for top-level concurrency settings
-      if (workflow.concurrency) {
-        // Check for group+cancel-in-progress pattern which doesn't limit concurrency
-        if (typeof workflow.concurrency === 'object' && 
-            workflow.concurrency['cancel-in-progress'] === true) {
-          console.log(`${relativeFilePath}: Has cancel-in-progress concurrency, not counting toward limit`);
-          workflowConcurrencyDetails.push({
-            file: relativeFilePath,
-            level: 'workflow',
-            type: 'cancel-in-progress',
-            counted: false
-          });
-        } else {
-          totalConcurrency++;
-          console.log(`${relativeFilePath}: Found top-level concurrency, count: ${totalConcurrency}`);
-          workflowConcurrencyDetails.push({
-            file: relativeFilePath,
-            level: 'workflow',
-            type: 'standard',
-            counted: true
-          });
-        }
-      }
-      
-      // Check for job-level concurrency settings
-      if (workflow.jobs) {
-        Object.keys(workflow.jobs).forEach(jobKey => {
-          const job = workflow.jobs[jobKey];
-          if (job.concurrency) {
-            // Check for group+cancel-in-progress pattern which doesn't limit concurrency
-            if (typeof job.concurrency === 'object' && 
-                job.concurrency['cancel-in-progress'] === true) {
-              console.log(`${relativeFilePath}/${jobKey}: Has cancel-in-progress concurrency, not counting toward limit`);
-              workflowConcurrencyDetails.push({
-                file: relativeFilePath,
-                job: jobKey,
-                level: 'job',
-                type: 'cancel-in-progress',
-                counted: false
-              });
-            } else {
-              totalConcurrency++;
-              console.log(`${relativeFilePath}/${jobKey}: Found job-level concurrency, count: ${totalConcurrency}`);
-              workflowConcurrencyDetails.push({
-                file: relativeFilePath,
-                job: jobKey,
-                level: 'job',
-                type: 'standard',
-                counted: true
-              });
-            }
-          }
-        });
-      }
-      
-      // Check for max parallel jobs when concurrency isn't explicitly defined
-      if (!workflow.concurrency) {
-        let jobCount = 0;
-        if (workflow.jobs) {
-          jobCount = Object.keys(workflow.jobs).length;
-          // Only count workflows that don't have explicit needs dependencies
-          // as those would run in parallel
-          let independentJobs = 0;
-          let independentJobNames = [];
-          
-          Object.keys(workflow.jobs).forEach(jobKey => {
-            const job = workflow.jobs[jobKey];
-            if (!job.needs) {
-              independentJobs++;
-              independentJobNames.push(jobKey);
-            }
-          });
-          
-          if (independentJobs > 1) {
-            totalConcurrency += independentJobs;
-            console.log(`${relativeFilePath}: Found ${independentJobs} independent jobs that could run in parallel, count: ${totalConcurrency}`);
-            workflowConcurrencyDetails.push({
-              file: relativeFilePath,
-              level: 'implicit',
-              jobs: independentJobNames,
-              count: independentJobs,
-              counted: true
-            });
-          }
-        }
-      }
-      
-    } catch (error) {
-      const errorMsg = `Error processing ${file}: ${error.message}`;
-      issues.push(errorMsg);
-      console.error(errorMsg);
-    }
-  });
-  
-  console.log(`\nTotal concurrency usage across all workflows: ${totalConcurrency}`);
-  console.log(`Maximum allowed concurrency: ${MAX_CONCURRENCY}`);
-  
-  const validationPassed = totalConcurrency <= MAX_CONCURRENCY;
-  
-  if (!validationPassed) {
-    const errorMsg = `Total concurrency (${totalConcurrency}) exceeds maximum allowed (${MAX_CONCURRENCY})`;
-    issues.push(errorMsg);
-    console.log('Concurrency validation FAILED');
-    
-    // Output error message for GitHub Actions
-    console.log(`::error::${errorMsg}`);
-    
-    if (FAIL_ON_ERROR) {
-      process.exit(1);
-    }
-  } else {
-    console.log('Concurrency validation PASSED');
-  }
-  
-  if (issues.length > 0) {
-    console.log('\nIssues found:');
-    issues.forEach(issue => console.log(` - ${issue}`));
-  }
-  
-  // Set outputs for GitHub Actions
-  setOutput('total_concurrency', totalConcurrency.toString());
-  setOutput('validation_passed', validationPassed.toString());
-  setOutput('issues', JSON.stringify(issues));
-  setOutput('details', JSON.stringify(workflowConcurrencyDetails));
-  
-} catch (error) {
-  console.error(`Fatal error: ${error.message}`);
-  issues.push(`Fatal error: ${error.message}`);
-  setOutput('total_concurrency', '0');
-  setOutput('validation_passed', 'false');
-  setOutput('issues', JSON.stringify(issues));
-  
-  if (FAIL_ON_ERROR) {
-    process.exit(1);
-  }
-}
-module.exports = __webpack_exports__;
+/******/ 	
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	// This entry module is referenced by other modules so it can't be inlined
+/******/ 	var __webpack_exports__ = __nccwpck_require__(106);
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
 /******/ })()
 ;
