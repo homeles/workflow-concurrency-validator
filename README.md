@@ -2,17 +2,14 @@
 This GitHub Action validates that the concurrency usage across workflows in a repository does not exceed a specified limit. It helps prevent abuse of GitHub's concurrent job limits by analyzing workflow files and detecting potential parallel execution.
 
 ## What it checks
-- Top-level concurrency settings in workflows
-- Job-level concurrency settings
 - Implicit concurrency from jobs that run in parallel (no dependencies)
 - Matrix job combinations
 - Jobs within the same workflow run that can execute in parallel
 
 ## Important Notes
-- Jobs within the same workflow run can execute in parallel even with `cancel-in-progress: true`
-- `cancel-in-progress` only affects concurrent workflow runs, not jobs within the same workflow
-- Matrix jobs are counted by their total number of combinations
 - Dependencies between jobs (`needs:`) are properly analyzed to identify truly parallel execution paths
+- Matrix jobs are counted by their total number of combinations
+- All jobs at the same dependency level will be counted towards parallel execution
 
 ## Installation
 
@@ -334,26 +331,7 @@ The action uses the modern GitHub Actions output method with environment files. 
 ### Understanding Concurrency Detection
 The action detects concurrency in several ways:
 
-1. **Explicit workflow-level concurrency**: Set via `concurrency:` at the workflow root
-   - Simple string format: `concurrency: group1`
-   - Object format with cancel-in-progress: 
-     ```yaml
-     concurrency:
-       group: build-group
-       cancel-in-progress: true
-     ```
-   Note: cancel-in-progress only affects concurrent workflow runs, not jobs within the same workflow
-
-2. **Explicit job-level concurrency**: Set via `concurrency:` in individual jobs
-   ```yaml
-   jobs:
-     job1:
-       concurrency: group1
-     job2:
-       concurrency: group2
-   ```
-
-3. **Implicit parallel jobs**: Jobs that can run in parallel based on:
+1. **Implicit parallel jobs**: Jobs that can run in parallel based on:
    - No `needs:` dependencies between them
    - Being in the same dependency level
    Example:
@@ -372,7 +350,7 @@ The action detects concurrency in several ways:
    ```
    Here, `build` and `test` can run in parallel (count: 2), while `deploy` runs after them (different level)
 
-4. **Matrix jobs**: Count based on total combinations
+2. **Matrix jobs**: Count based on total combinations
    ```yaml
    jobs:
      test:
@@ -397,20 +375,7 @@ The action detects concurrency in several ways:
    ```
    Total concurrency: 2 (both jobs can run in parallel)
 
-2. Workflow with cancel-in-progress and parallel jobs:
-   ```yaml
-   concurrency:
-     group: build
-     cancel-in-progress: true
-   jobs:
-     job1:
-       runs-on: ubuntu-latest
-     job2:
-       runs-on: ubuntu-latest
-   ```
-   Total concurrency: 2 (jobs can still run in parallel within the same workflow)
-
-3. Matrix job with dependencies:
+2. Matrix job with dependencies:
    ```yaml
    jobs:
      test:

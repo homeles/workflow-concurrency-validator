@@ -182,16 +182,6 @@ try {
                 return;
             }
             let details = [];
-            // Check if workflow has cancel-in-progress concurrency
-            if (typeof workflow.concurrency === 'object' && workflow.concurrency['cancel-in-progress'] === true) {
-                Logger.info('Note: Workflow has cancel-in-progress concurrency (only affects concurrent workflow runs)');
-                details.push({
-                    file: relativeFilePath,
-                    level: 'workflow',
-                    type: 'cancel-in-progress',
-                    counted: false
-                });
-            }
             // Process each level of parallel jobs for logging
             parallelJobs.forEach((level, index) => {
                 if (level.length > 0) {
@@ -215,8 +205,6 @@ try {
                     }
                     details.push({
                         file: relativeFilePath,
-                        level: 'implicit',
-                        type: 'standard',
                         jobs: level,
                         count: levelConcurrency,
                         counted: true
