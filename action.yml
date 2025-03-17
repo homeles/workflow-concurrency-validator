@@ -1,0 +1,81 @@
+name: 'Workflow Concurrency Validator'
+description: 'Validates that GitHub Actions workflow concurrency does not exceed specified limits'
+author: 'Oscar Romero'
+
+inputs:
+  max-concurrency:
+    description: 'Maximum allowed concurrency across all workflows'
+    required: false
+    default: '10'
+  workflow-path:
+    description: 'Path to the workflows directory'
+    required: false
+    default: '.github/workflows'
+  fail-on-error:
+    description: 'Whether to fail the action if validation fails'
+    required: false
+    default: 'true'
+  comment-on-pr:
+    description: 'Whether to comment on PR if validation fails'
+    required: false
+    default: 'true'
+  token:
+    description: 'GitHub token for commenting on PRs'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  total-concurrency:
+    description: 'Total concurrency detected across workflows'
+    value: ${{ steps.validate.outputs.total_concurrency }}
+  validation-passed:
+    description: 'Whether validation passed'
+    value: ${{ steps.validate.outputs.validation_passed }}
+  issues:
+    description: 'Issues found during validation'
+    value: ${{ steps.validate.outputs.issues }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'
+      
+    - name: Validate workflow concurrency
+      id: validate
+      run: node ${{ github.action_path }}/dist/index.js
+      shell: bash
+      env:
+        INPUT_MAX_CONCURRENCY: ${{ inputs.max-concurrency }}
+        INPUT_WORKFLOW_PATH: ${{ inputs.workflow-path }}
+        INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        GITHUB_WORKSPACE: ${{ github.workspace }}
+        
+    - name: Comment on PR if validation fails
+      if: inputs.comment-on-pr == 'true' && steps.validate.outputs.validation_passed == 'false' && github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const issues = JSON.parse('${{ steps.validate.outputs.issues }}');
+          const totalConcurrency = '${{ steps.validate.outputs.total_concurrency }}';
+          const maxConcurrency = '${{ inputs.max-concurrency }}';
+          
+          let body = '❌ Workflow Concurrency Validation Failed!\n\n';
+          body += `Total concurrency (${totalConcurrency}) exceeds maximum allowed (${maxConcurrency}).\n\n`;
+          
+          if (issues.length > 0) {
+            body += 'Issues found:\n';
+            issues.forEach(issue => {
+              body += `- ${issue}\n`;
+            });
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });

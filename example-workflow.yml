@@ -1,0 +1,28 @@
+name: Validate Workflow Concurrency
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Validate Workflow Concurrency
+        uses: homeles/workflow-concurrency-validator@v1
+        with:
+          max-concurrency: '10'
+          comment-on-pr: 'true'
+          
+      - name: Fail if validation doesn't pass
+        if: steps.validate.outputs.validation_passed == 'false'
+        run: exit 1

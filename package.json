@@ -1,0 +1,26 @@
+{
+    "name": "workflow-concurrency-validator",
+    "version": "1.0.0",
+    "description": "GitHub Action to validate workflow concurrency limits",
+    "main": "validate-concurrency.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "build": "ncc build validate-concurrency.js -o dist"
+    },
+    "keywords": [
+        "github",
+        "actions",
+        "concurrency",
+        "validation",
+        "workflow"
+    ],
+    "author": "Oscar Romero",
+    "license": "MIT",
+    "dependencies": {
+        "glob": "^7.2.0",
+        "js-yaml": "^4.1.0"
+    },
+    "devDependencies": {
+        "@vercel/ncc": "^0.38.3"
+    }
+}
