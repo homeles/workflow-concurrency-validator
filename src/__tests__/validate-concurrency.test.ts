@@ -50,13 +50,16 @@ describe('Workflow Concurrency Validator', () => {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
-  test('validates workflow with top-level concurrency', async () => {
+  test('validates workflow with parallel jobs', async () => {
     const workflow = `
 name: Test Workflow
 on: push
-concurrency: group1
 jobs:
-  test:
+  test1:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "test"
+  test2:
     runs-on: ubuntu-latest
     steps:
       - run: echo "test"
@@ -69,87 +72,8 @@ jobs:
     expect(JSON.parse(output.match(/workflow_results<<.*\n(.*)\n/)?.[1] || '')[0]).toEqual(
       expect.objectContaining({
         file: '.github/workflows/test1.yml',
-        concurrencyCount: 1,
-        passed: true
-      })
-    );
-    expect(output).toMatch(/validation_passed<<.*\ntrue\n/);
-    expect(output).toMatch(/total_concurrency<<.*\n0\n/);
-  });
-
-  test('validates workflow with job-level concurrency', async () => {
-    const workflow = `
-name: Test Workflow
-on: push
-jobs:
-  test1:
-    runs-on: ubuntu-latest
-    concurrency: job1
-    steps:
-      - run: echo "test"
-  test2:
-    runs-on: ubuntu-latest
-    concurrency: job2
-    steps:
-      - run: echo "test"
-`;
-    fs.writeFileSync(path.join(workflowDir, 'test2.yml'), workflow);
-    
-    await runValidator();
-    
-    const output = getGitHubOutput();
-    expect(JSON.parse(output.match(/workflow_results<<.*\n(.*)\n/)?.[1] || '')[0]).toEqual(
-      expect.objectContaining({
-        file: '.github/workflows/test2.yml',
         concurrencyCount: 2,
         passed: true
-      })
-    );
-    expect(output).toMatch(/validation_passed<<.*\ntrue\n/);
-    expect(output).toMatch(/total_concurrency<<.*\n0\n/);
-  });
-
-  test('validates workflow with cancel-in-progress concurrency', async () => {
-    const workflow = `
-name: Test Workflow
-on: push
-concurrency:
-  group: build
-  cancel-in-progress: true
-jobs:
-  test1:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "test1"
-  test2:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "test2"
-`;
-    fs.writeFileSync(path.join(workflowDir, 'test3.yml'), workflow);
-    
-    await runValidator();
-    
-    const output = getGitHubOutput();
-    expect(JSON.parse(output.match(/workflow_results<<.*\n(.*)\n/)?.[1] || '')[0]).toEqual(
-      expect.objectContaining({
-        file: '.github/workflows/test3.yml',
-        concurrencyCount: 2,
-        passed: true,
-        details: expect.arrayContaining([
-          expect.objectContaining({
-            level: 'workflow',
-            type: 'cancel-in-progress',
-            counted: false
-          }),
-          expect.objectContaining({
-            level: 'implicit',
-            type: 'standard',
-            jobs: ['test1', 'test2'],
-            count: 2,
-            counted: true
-          })
-        ])
       })
     );
     expect(output).toMatch(/validation_passed<<.*\ntrue\n/);
@@ -175,14 +99,14 @@ jobs:
     steps:
       - run: echo "test"
 `;
-    fs.writeFileSync(path.join(workflowDir, 'test4.yml'), workflow);
+    fs.writeFileSync(path.join(workflowDir, 'test2.yml'), workflow);
     
     await runValidator();
     
     const output = getGitHubOutput();
     expect(JSON.parse(output.match(/workflow_results<<.*\n(.*)\n/)?.[1] || '')[0]).toEqual(
       expect.objectContaining({
-        file: '.github/workflows/test4.yml',
+        file: '.github/workflows/test2.yml',
         concurrencyCount: 2,
         passed: true
       })
@@ -200,16 +124,14 @@ on: push
 jobs:
   test1:
     runs-on: ubuntu-latest
-    concurrency: job1
     steps:
       - run: echo "test"
   test2:
     runs-on: ubuntu-latest
-    concurrency: job2
     steps:
       - run: echo "test"
 `;
-    fs.writeFileSync(path.join(workflowDir, 'test5.yml'), workflow);
+    fs.writeFileSync(path.join(workflowDir, 'test3.yml'), workflow);
     
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     
@@ -218,7 +140,7 @@ jobs:
     const output = getGitHubOutput();
     expect(JSON.parse(output.match(/workflow_results<<.*\n(.*)\n/)?.[1] || '')[0]).toEqual(
       expect.objectContaining({
-        file: '.github/workflows/test5.yml',
+        file: '.github/workflows/test3.yml',
         concurrencyCount: 2,
         passed: false
       })
@@ -237,7 +159,6 @@ on: push
 jobs:
   test1:
     runs-on: ubuntu-latest
-    concurrency: job1
     steps:
       - run: echo "test"
 `;
@@ -248,12 +169,10 @@ on: push
 jobs:
   test1:
     runs-on: ubuntu-latest
-    concurrency: job1
     steps:
       - run: echo "test"
   test2:
     runs-on: ubuntu-latest
-    concurrency: job2
     steps:
       - run: echo "test"
 `;

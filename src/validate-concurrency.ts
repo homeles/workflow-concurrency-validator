@@ -4,23 +4,11 @@ import yaml from 'js-yaml';
 import glob from 'glob';
 
 /**
- * Represents the concurrency configuration in a workflow file
- */
-interface WorkflowConcurrency {
-  /** The concurrency group name */
-  group?: string;
-  /** Whether to cancel in-progress runs */
-  'cancel-in-progress'?: boolean;
-}
-
-/**
  * Represents a job in a GitHub Actions workflow file
  */
 interface WorkflowJob {
   /** Dependencies of this job - can be a string or array of strings */
   needs?: string | string[];
-  /** Concurrency configuration for this job */
-  concurrency?: WorkflowConcurrency | string;
   /** Strategy configuration for matrix jobs */
   strategy?: {
     matrix?: Record<string, any>;
@@ -31,8 +19,6 @@ interface WorkflowJob {
  * Represents the structure of a GitHub Actions workflow file
  */
 interface WorkflowFile {
-  /** Top-level concurrency configuration */
-  concurrency?: WorkflowConcurrency | string;
   /** Map of job names to job configurations */
   jobs?: Record<string, WorkflowJob>;
 }
@@ -43,12 +29,6 @@ interface WorkflowFile {
 interface ConcurrencyDetail {
   /** Relative path to the workflow file */
   file: string;
-  /** Name of the job (if job-level concurrency) */
-  job?: string;
-  /** The level at which concurrency is defined */
-  level: 'workflow' | 'job' | 'implicit';
-  /** The type of concurrency configuration */
-  type?: 'standard' | 'cancel-in-progress';
   /** List of job names (for implicit concurrency) */
   jobs?: string[];
   /** Number of concurrent jobs (for implicit concurrency) */
@@ -268,17 +248,6 @@ try {
 
       let details: ConcurrencyDetail[] = [];
       
-      // Check if workflow has cancel-in-progress concurrency
-      if (typeof workflow.concurrency === 'object' && workflow.concurrency['cancel-in-progress'] === true) {
-        Logger.info('Note: Workflow has cancel-in-progress concurrency (only affects concurrent workflow runs)');
-        details.push({
-          file: relativeFilePath,
-          level: 'workflow',
-          type: 'cancel-in-progress',
-          counted: false
-        });
-      }
-      
       // Process each level of parallel jobs for logging
       parallelJobs.forEach((level, index) => {
         if (level.length > 0) {
@@ -305,8 +274,6 @@ try {
 
           details.push({
             file: relativeFilePath,
-            level: 'implicit',
-            type: 'standard',
             jobs: level,
             count: levelConcurrency,
             counted: true
