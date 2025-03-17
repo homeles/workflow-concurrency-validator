@@ -62,22 +62,6 @@ runs:
         GITHUB_WORKSPACE: ${{ github.workspace }}
         GITHUB_TOKEN: ${{ inputs.token }}
         GITHUB_EVENT_NAME: ${{ github.event_name }}
-
-    - name: Debug PR comment conditions
-      if: always()
-      shell: bash
-      run: |
-        echo "Debug PR comment conditions:"
-        echo "comment-on-pr input: ${{ inputs.comment-on-pr }}"
-        echo "INPUT_COMMENT_ON_PR env: $INPUT_COMMENT_ON_PR"
-        echo "validation_passed: ${{ steps.validate.outputs.validation_passed }}"
-        echo "github.event_name: ${{ github.event_name }}"
-        if [ -f "$GITHUB_OUTPUT" ]; then
-          echo "Contents of GITHUB_OUTPUT:"
-          cat "$GITHUB_OUTPUT"
-        else
-          echo "No GITHUB_OUTPUT file found"
-        fi
         
     - name: Comment on PR if validation fails
       if: ${{ always() && inputs.comment-on-pr == 'true' && steps.validate.outputs.validation_passed == 'false' && github.event_name == 'pull_request' }}
